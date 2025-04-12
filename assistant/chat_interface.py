@@ -1,5 +1,5 @@
 import openai
-openai.api_key = "your-api-key-here"  # Replace this with your OpenAI API key
+openai.api_key = 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
 
 def get_response(user_input, context=None):
     prompt = f"""
