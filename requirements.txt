@@ -4,4 +4,4 @@ scikit-learn
 pandas
 joblib
 matplotlib
-API KEY : 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
+
