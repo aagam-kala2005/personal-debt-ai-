@@ -25,7 +25,7 @@ risk_model = LogisticRegression()
 risk_model.fit(np.array([[0.3], [0.5], [0.7]]), np.array([0, 1, 1]))  # 0=low risk, 1=high risk
 
  
-openai.api_key = getpass("Enter your OpenAI API key:  
+openai.api_key = getpass("Enter your OpenAI API key:")  
 
 
 def get_debt_trend(country):
