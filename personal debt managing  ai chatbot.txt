@@ -1,1 +1,286 @@
 
+!pip install gradio pandas matplotlib scikit-learn openai numpy
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+from io import BytesIO
+from sklearn.linear_model import LogisticRegression
+import gradio as gr
+import openai
+import re
+from getpass import getpass  # Added for secure API key input in Colab
+
+
+
+debt_data = pd.DataFrame({
+    'country': ['USA', 'India', 'Germany', 'UK', 'Japan'],
+    '2020': [78.2, 35.4, 54.1, 85.3, 62.8],
+    '2021': [80.1, 37.0, 55.3, 86.7, 63.5],
+    '2022': [82.0, 38.5, 56.7, 88.2, 64.1]
+})
+
+
+risk_model = LogisticRegression()
+risk_model.fit(np.array([[0.3], [0.5], [0.7]]), np.array([0, 1, 1]))  # 0=low risk, 1=high risk
+
+ 
+openai.api_key = getpass("Enter your OpenAI API key: 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")  
+
+
+def get_debt_trend(country):
+    """Generate debt trend plot for a country"""
+    country = country.title()
+    country_data = debt_data[debt_data['country'] == country]
+    if country_data.empty:
+        return None, "Country not found in database"
+    
+    years = [col for col in country_data.columns if col.isdigit()]
+    values = country_data[years].values.flatten()
+    
+    plt.figure(figsize=(10, 5))
+    plt.plot(years, values, marker='o', color='blue')
+    plt.title(f"National Debt Trend for {country} (% of GDP)")
+    plt.xlabel("Year")
+    plt.ylabel("Debt Percentage")
+    plt.grid(True)
+    
+    buf = BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)  # Added DPI for clarity
+    plt.close()
+    buf.seek(0)
+    return buf, f"Debt trend generated for {country}"
+
+def calculate_repayment(debt, apr, payment):
+    """Calculate repayment plan with enhanced error handling for Colab"""
+    try:
+        # Convert inputs to float and validate
+        debt = float(debt or 0)  # Handle None or empty input
+        apr = float(apr or 0)
+        payment = float(payment or 0)
+        
+        if debt <= 0 or apr <= 0 or payment <= 0:
+            return "All values must be positive numbers", None
+        
+        monthly_rate = apr / 100 / 12  # Convert APR to monthly rate
+        
+        
+        min_payment = debt * monthly_rate
+        if payment <= min_payment:
+            return (
+                f"⚠️ Payment doesn't cover interest!\n"
+                f"At {apr}% APR, you need to pay at least "
+                f"${min_payment * 1.01:,.2f}/month to reduce debt.\n"
+                f"Current payment: ${payment:,.2f} | "
+                f"Monthly interest: ${min_payment:,.2f}",
+                None
+            )
+        
+        # Calculate repayment schedule
+        months = 0
+        total_interest = 0
+        remaining = debt
+        history = []
+        
+        while remaining > 0 and months < 600:  # 50-year cap
+            interest = remaining * monthly_rate
+            principal = payment - interest
+            remaining -= principal
+            total_interest += interest
+            months += 1
+            history.append({
+                'Month': months,
+                'Remaining': max(0, remaining),
+                'Interest': interest
+            })
+        
+        
+        plt.figure(figsize=(10, 5))
+        months_list = [x['Month'] for x in history]
+        remaining_list = [x['Remaining'] for x in history]
+        interest_cumsum = np.cumsum([x['Interest'] for x in history])
+        
+        plt.plot(months_list, remaining_list, label='Remaining Debt', color='blue')
+        plt.plot(months_list, interest_cumsum, label='Total Interest', linestyle='--', color='red')
+        plt.xlabel("Months")
+        plt.ylabel("Amount ($)")
+        plt.title(f"Repayment Plan ({apr}% APR)")
+        plt.legend()
+        plt.grid(True)
+        
+        buf = BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)  # Added DPI for Colab
+        plt.close()
+        buf.seek(0)
+        
+        
+        return (
+            f"📊 Debt Repayment Analysis:\n"
+            f"• Principal: ${debt:,.2f}\n"
+            f"• Interest Rate: {apr}% APR\n"
+            f"• Monthly Payment: ${payment:,.2f}\n\n"
+            f"⏱️ Time to repay: {months//12}y {months%12}m\n"
+            f"💵 Total Interest: ${total_interest:,.2f}\n"
+            f"💰 Total Paid: ${debt + total_interest:,.2f}",
+            buf
+        )
+        
+    except ValueError as ve:
+        return f"Input error: Please enter valid numbers (e.g., 15000, 7.5, 500).", None
+    except Exception as e:
+        return f"Unexpected error: {str(e)}. Please try again.", None
+
+def predict_risk(income, expenses, debt):
+    """Predict default risk using simple model"""
+    try:
+        income = float(income or 0)
+        expenses = float(expenses or 0)
+        debt = float(debt or 0)
+        
+        if income <= 0 or expenses < 0 or debt < 0:
+            return "Please enter valid positive numbers"
+        
+        disposable_income = income - expenses
+        if disposable_income <= 0:
+            return "⚠️ Your expenses exceed your income!"
+        
+        debt_ratio = debt / (disposable_income * 12)  # Annualized ratio
+        risk_score = risk_model.predict_proba([[debt_ratio]])[0][1] * 100
+        
+        return (
+            f"🔍 Risk Analysis:\n"
+            f"• Monthly Income: ${income:,.2f}\n"
+            f"• Monthly Expenses: ${expenses:,.2f}\n"
+            f"• Total Debt: ${debt:,.2f}\n"
+            f"• Debt-to-Income Ratio: {debt_ratio:.2f}\n\n"
+            f"⚠️ Default Risk: {risk_score:.1f}%\n"
+            f"✅ Safety Margin: {100-risk_score:.1f}%"
+        )
+    except:
+        return "Could not calculate risk - please check inputs"
+
+def get_ai_advice(query):
+    """Get financial advice from LLM"""
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{
+                "role": "system",
+                "content": "You're a financial advisor. Give concise, practical debt management advice in 2-3 sentences."
+            }, {
+                "role": "user",
+                "content": query
+            }],
+            temperature=0.7,
+            max_tokens=150
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"AI advice unavailable: {str(e)}. Please try the calculator tools."
+
+
+with gr.Blocks(theme=gr.themes.Soft()) as app:
+    gr.Markdown(""")
+    *Get personalized debt solutions with repayment plans, risk analysis, and expert advice*
+    """)
+    
+    with gr.Tab("💬 Chat Assistant"):
+        gr.Markdown("### Ask natural language questions about debt management")
+        with gr.Row():
+            chat_input = gr.Textbox(label="Your question", placeholder="E.g. 'How to pay off $20K debt at 5% APR?'")
+            chat_btn = gr.Button("Get Advice", variant="primary")
+        with gr.Row():
+            chat_output = gr.Textbox(label="Advice", interactive=False)
+            trend_image = gr.Image(label="Visualization")  # Removed visible=False for Colab
+    
+    with gr.Tab("🧮 Repayment Calculator"):
+        gr.Markdown("### Calculate your personalized repayment plan")
+        with gr.Row():
+            with gr.Column():
+                debt_amount = gr.Number(label="Total Debt ($)", value=15000, minimum=1)  # Added minimum
+                interest_rate = gr.Number(label="Annual Interest Rate (%)", value=7.5, minimum=0.1)  # Added minimum
+                monthly_payment = gr.Number(label="Monthly Payment ($)", value=500, minimum=1)  # Added minimum
+                calc_btn = gr.Button("Calculate Plan", variant="primary")
+            with gr.Column():
+                repayment_output = gr.Textbox(label="Repayment Plan", interactive=False)  # Set interactive=False
+                repayment_chart = gr.Image(label="Payment Timeline")
+    
+    with gr.Tab("⚠️ Risk Calculator"):
+        gr.Markdown("### Assess your financial health")
+        with gr.Row():
+            with gr.Column():
+                monthly_income = gr.Number(label="Monthly Income ($)", value=5000, minimum=1)
+                monthly_expenses = gr.Number(label="Monthly Expenses ($)", value=3500, minimum=0)
+                total_debt = gr.Number(label="Total Debt ($)", value=20000, minimum=0)
+                risk_btn = gr.Button("Assess Risk", variant="primary")
+            with gr.Column():
+                risk_output = gr.Textbox(label="Risk Analysis", interactive=False)
+    
+    
+    def handle_chat(message):
+        if not message:
+            return "Please enter a question", None
+        message = message.lower()
+        
+        
+        if "trend" in message or "graph" in message:
+            for country in debt_data['country']:
+                if country.lower() in message:
+                    img, text = get_debt_trend(country)
+                    return text, img
+            return "Please specify a valid country (e.g. 'Show trend for USA')", None
+        
+        
+        elif "repay" in message or "pay off" in message:
+            nums = re.findall(r'\$?(\d{1,3}(?:,\d{3})*(?:\.\d+)?)', message)
+            percs = re.findall(r'(\d+(?:\.\d+)?%)', message)
+            
+            if len(nums) >= 2 and percs:
+                debt = float(nums[0].replace(',',''))
+                payment = float(nums[1].replace(',',''))
+                apr = float(percs[0].replace('%',''))
+                return calculate_repayment(debt, apr, payment)
+            else:
+                return (
+                    "Please provide:\n"
+                    "1. Debt amount (e.g. $20,000)\n"
+                    "2. Interest rate (e.g. 5%)\n"
+                    "3. Monthly payment (e.g. $500)\n"
+                    "Example: 'I owe $25,000 at 7% APR with $800/month payments'"
+                ), None
+        
+    
+        elif "risk" in message or "safe" in message:
+            return (
+                "For detailed risk analysis, please use the 'Risk Calculator' tab "
+                "or provide:\n"
+                "- Monthly income\n"
+                "- Monthly expenses\n"
+                "- Total debt amount"
+            ), None
+        
+        
+        else:
+            return get_ai_advice(message), None
+    
+    
+    chat_btn.click(
+        fn=handle_chat,
+        inputs=chat_input,
+        outputs=[chat_output, trend_image]
+    )
+    
+    calc_btn.click(
+        fn=calculate_repayment,
+        inputs=[debt_amount, interest_rate, monthly_payment],
+        outputs=[repayment_output, repayment_chart]
+    )
+    
+    risk_btn.click(
+        fn=predict_risk,
+        inputs=[monthly_income, monthly_expenses, total_debt],
+        outputs=risk_output
+    )
+
+
+app.launch(share=True)  
